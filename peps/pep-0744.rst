@@ -36,7 +36,7 @@ the following resources:
   background, a light technical introduction to the "copy-and-patch" technique
   used, and an open discussion of its design amongst the core developers
   present.
-- The `paper <https://dl.acm.org/doi/10.1145/3485513>`_ originally describing
+- The open access `paper <https://dl.acm.org/doi/10.1145/3485513>`_ originally describing
   copy-and-patch.
 - The `blog post <https://sillycross.github.io/2023/05/12/2023-05-12>`_ by the
   paper's author detailing the implementation of a copy-and-patch JIT compiler
@@ -63,7 +63,8 @@ This new interpreter delivers significant performance improvements, despite the
 fact that its optimization potential is limited by the boundaries of individual
 bytecode instructions. It also collects a wealth of new profiling information:
 the types flowing though a program, the memory layout of the data being operated
-upon, and what paths through the program are being executed the most. In other
+upon [MGD: It isn't clear to me exactly what is meant by memory layout in this context],
+and what paths through the program are being executed the most. In other
 words, *what* to optimize, and *how* to optimize it.
 
 Since the Python 3.12 release, CPython has generated this interpreter from a
@@ -102,7 +103,7 @@ physical hardware registers).
 Since much of this data varies between runs of a program (even functionally
 identical ones) and the existing optimization pipeline makes heavy use of
 runtime profiling information, it doesn't make much sense to compile these
-traces ahead of time. As has been demonstrated for many other dynamic languages
+traces ahead of time. As has been demonstrated for many other dynamic languages,
 (`even Python itself <https://www.pypy.org/>`_), the most promising approach is
 to compile the optimized micro-ops "just in time" for execution.
 
@@ -116,7 +117,15 @@ Developing and maintaining any sort of optimizing compiler for even a single
 platform is an incredibly complicated, expensive task. Using an existing
 compiler framework like LLVM can make this task simpler, but only at the cost of
 introducing heavy runtime dependencies and significantly higher JIT compilation
-overhead.
+overhead.  
+
+[MGD NOTE: I kind of wanted to link to PEP11 here as proof of the breadth of 
+platforms that Python runs on, some of which may not easily support a complex LLVM
+JIT pipeline, but (a) I don't have proof that, say, a Raspberry Pi would do badly 
+with that, and (b) it brings up the question of niche platforms for which we will
+probably keep the JIT disabled.  Still, I think it is an important point that Python
+is "nimble" relative to, say, the JVM.  Just leaving this as a comment if you can
+think of how to work that in.]
 
 It's clear that successfully compiling Python code at runtime requires not only
 high-quality Python-specific optimizations for the code being run, *but also*
@@ -129,12 +138,12 @@ In a nutshell, copy-and-patch allows a high-quality template JIT compiler to be
 generated from the same DSL used to generate the rest of the interpreter. For a
 widely-used, volunteer-driven project like CPython, this benefit cannot be
 overstated: CPython's maintainers, by merely editing the bytecode definitions,
-will also get the JIT backend updated "for free", for *all* platforms, at once.
+will also get the JIT backend updated "for free", for *all* JIT-supported platforms, at once.
 This is equally true whether adding new instructions, removing old ones, or
 fixing bugs in existing ones.
 
 Like the rest of the interpreter, the JIT compiler is generated at build time,
-and has no runtime dependencies. It supports a wide range of platforms, and has
+and has no runtime dependencies. It supports a wide range of platforms (see [Support](#support) below), and has
 comparatively low maintenance burden. In all, the current implementation is made
 up of about 900 lines of build-time Python code and 500 lines of runtime C code.
 
@@ -165,6 +174,10 @@ may be broken or removed at any time without warning.
 
 Of course, at any point, it is also within the Steering Council's power to ask
 for the JIT to be removed entirely if they feel it is necessary to do so.
+
+[MGD: I don't have a lot of experience with how PEPs usually go, but I think this 
+above paragraph is better left to the Discuss forum -- it kind of goes without
+saying here, but would be fine to communicate your deference to the SC in a discussion].
 
 Once the JIT is no longer experimental, it should be treated in much the same
 way as other build options (such as ``--enable-optimizations`` or
@@ -216,18 +229,23 @@ JIT support for a platform should *not* be considered a backwards-incompatible
 change. However, if it is reasonable to do so, the normal deprecation process
 should be followed as outlined in :pep:`387`.
 
-The JIT's dependencies may be changed between releases (within reason).
+The JIT's build-time dependencies may be changed between releases (within reason).
 
 Backwards Compatibility
 =======================
 
 .. Describe potential impact and severity on pre-existing code.
 
+[MGD: I think lately, (especially as we've given up any expectation that Tier 2 
+would be used in production), the "JIT" essentially encompasses everything needed 
+to support it, including uops and the optimizer, so maybe this is a distinction 
+without a difference here ... so maybe:]
+
 Due to the fact that the current intepreter and the JIT backend are both
 generated from the same specification, the behavior of Python code should be
 completely unchanged. In practice, observable differences that have arisen (and
-been fixed) during testing have more often been bugs in the micro-ops and the
-way they are optimized, rather than bugs in the JIT backend itself.
+been fixed) during testing have tend to be in the uop compilation and optimization stages,
+rather than bugs in the copy-and-patch step.
 
 Debugging
 ---------
@@ -291,6 +309,8 @@ it *appears* that macOS releases should `enable the JIT Entitlement for the
 Hardened Runtime
 <https://developer.apple.com/documentation/apple-silicon/porting-just-in-time-compilers-to-apple-silicon#Enable-the-JIT-Entitlement-for-the-Hardened-Runtime>`_.
 
+[MGD: Having not been a macOS user for a while, what are the user-facing implications of this?  Harder to install Python?]
+
 How to Teach This
 =================
 
@@ -339,8 +359,9 @@ Choose the sections that best describe you:
 
     - ..in general, the JIT shouldn't be much of an inconvenience to you
       (depending on what you're trying to do). The micro-op interpreter is still
-      around, and isn't going anywhere, so your day-to-day development will
-      probably with the JIT itself disabled (as it is now). There is moderate
+      around, and isn't going anywhere, and this offers an experience for debugging 
+      interpreter changes similer to what we have today with the main Tier 1 interpreter.
+      There is moderate
       likelihood that larger changes to the interpreter itself (such as adding
       new local variables, changing error handlers and deoptimization points,
       changing the micro-op format, etc.) will require changes to the C template
@@ -436,12 +457,18 @@ guaranteed tail calls (|musttail|_), which are required by CPython's
 <https://en.wikipedia.org/wiki/Continuation-passing_style#Tail_calls>`_ approach
 to JIT compilation.
 
+[MGD: Is it worth being explicit about what the alternative would do?  Am I correct that without this
+we would create a new C stack frame for each call from one uop to the next -- which obviously would blow
+up?  Or it just more dispatch overhead?]
+
 Since LLVM also includes other functionalities required by the JIT build process
 (namely, utilities for object file parsing and disassembly), it's convenient to
 only support one toolchain at this time.
 
 .. |musttail| replace:: ``musttail``
 .. _musttail: https://clang.llvm.org/docs/AttributeReference.html#musttail
+
+Also, supporting a single toolchain -- and a specific major version of it at any given time -- reduces the testing and maintenance burden.
 
 Use the JIT to compile "tier one" code
 --------------------------------------
@@ -500,6 +527,8 @@ Dependencies
 
 .. Q: Will the generated header files be tracked by Git?
 
+[MGD: Especially in light of the xv exploit that partly depended on changes to a binary blob, I think this should be a hard "no" on security grounds, but I am not a security engineer, etc. etc.]
+
 .. Q: Is the JIT generated at “generate files time” or “build time”?
 
 Building the JIT adds between 3 and 60 seconds to the build process, depending
@@ -509,6 +538,8 @@ itself) will be rebuilding it frequently.
 
 .. XXX: Unlike many other generated files in CPython, the JIT's generated files
    are not tracked by Git. This is because...
+
+[MGD: Perhaps it's worth a brief note with links to how easy it is to install LLVM of a specific version on all platforms. IME, LLVM is a lot better about distribution than GCC, so people may have the wrong expectations based on previous experience with GCC, or expecially MSVC.]
 
 Footnotes
 =========
